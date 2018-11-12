@@ -2,9 +2,12 @@
 using System.Collections.Generic;
 using System.Data;
 using System.Drawing;
+using System.IO;
 using System.Linq;
+using System.Media;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -13,6 +16,11 @@ using Around.Modele;
 
 namespace Around
 {
+    /*
+     * PORT TCP (ŁĄCZENIE Z NOWYMI KLIENTAMI, I PODTRZYMANIE ICH OBECNOŚCI) - 5759
+     * PORT UDP (SYNCHRONIZACJA PLIKÓW MUZYCZNYCH / MULTICAST) - 5758
+     */
+
     public partial class Streamer : Form
     {
         #region Zmienne globalne
@@ -21,13 +29,18 @@ namespace Around
 
         string StrServerIP;
 
+        const int CodliInstructionsPort = 5757;
+        const int FileTransferPort = 5758;
+        const int ConnectionPort = 5759;
+
         #endregion
 
         #region Zmienne obiektowe
 
         List<KlientIPModel> ListaAdresówKlientów;
-        IPAddress AdresIP;
         Point previousFormLoc;
+
+        IPAddress AdresIP;
 
         TcpListener Nasłuchiwacz;
         TcpClient Klient;
@@ -38,6 +51,8 @@ namespace Around
 
         Thread WątekNasłuchiwania;
         Thread WątekAktywnychKlientów;
+        Thread WątekSynchronizacji;
+        Thread WątekOdtwarzania;
 
         #endregion
 
@@ -103,6 +118,29 @@ namespace Around
             StreamingCodeLabel.Text = Around_Lib.GenerateNewConnectionKey(StrServerIP);
         }
 
+        private void ChooseFileBtn_Click(object sender, EventArgs e)
+        {
+            var oknoWyboru = new OpenFileDialog();
+            oknoWyboru.Filter = "Pliki dźwiękowe|*.mp3; *.wav; *.flac; *.aac; *.m4a;";
+            oknoWyboru.Title = "Wybierz plik do strumieniowania";
+
+            if (oknoWyboru.ShowDialog() == DialogResult.OK)
+            {
+                var ścieżka = oknoWyboru.FileName;
+                FilePathBox.Text = ścieżka;
+            }
+        }
+        
+        private void SyncBtn_Click(object sender, EventArgs e)
+        {
+            //Teraz uruchamiamy wątek synchronizacji
+            WątekSynchronizacji = new Thread(() => Synchronizuj(FilePathBox.Text));
+            WątekSynchronizacji.Start();
+
+            SyncBtn.Enabled = false;
+            SyncBtn.BackColor = Color.Silver;
+        }
+
         #endregion
 
         #region Wątki pracujące w tle
@@ -166,6 +204,91 @@ namespace Around
             }
         }
 
+        private void Synchronizuj(string ścieżkaDoPliku)
+        {
+            try
+            {
+                var cacheKlienci = ListaAdresówKlientów;
+                var plik = File.ReadAllBytes(ścieżkaDoPliku);
+                var Conte = 0;
+
+                foreach (var e in cacheKlienci)
+                {
+                    //Wysyłanie do pojedynczego klienta z listy
+                    TcpClient tcpClient = new TcpClient(e.AdresIP, FileTransferPort);
+                    NetworkStream stream = tcpClient.GetStream();
+                    stream.Write(plik, 0, plik.Length);
+                    tcpClient.Close();
+
+                    //Inkrementacja naszego quantyfikatora
+                    Conte++;
+
+                    //Aktualizacja stanu
+                    int progress = (Conte / cacheKlienci.Count()) * 100;
+                    if (progress > 100)
+                        progress = 100;
+
+                    MakeProgress(progress);
+                }
+            }
+
+            catch
+            {
+
+            }
+        }
+
+        private void WydajRozkaz(string polecenie)
+        {
+            foreach (var e in ListaAdresówKlientów)
+            {
+                TcpClient tcpClient = new TcpClient(e.AdresIP, CodliInstructionsPort);
+                NetworkStream stream = tcpClient.GetStream();
+                byte[] bytes = Encoding.UTF8.GetBytes(polecenie);
+                stream.Write(bytes, 0, bytes.Length);
+                tcpClient.Close();
+            }
+
+            //Teraz należy ten rozkaz wykonać również u nas...
+        }
+
+        private void Odtwarzaj()
+        {
+            var player = new SoundPlayer(FilePathBox.Text);
+            player.Play();
+        }
+
         #endregion
+
+        #region Obsługa interfejsu
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = false)]
+        static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr w, IntPtr l);
+        private void MakeProgress(int value)
+        {
+            SyncProgressBar.Invoke((MethodInvoker)delegate
+           {
+               SyncProgressBar.Value = value;
+           });
+        }
+
+        #endregion
+
+        private void PlayBtn_Click(object sender, EventArgs e)
+        {
+            var polecenie = new Thread(() => WydajRozkaz("PLAY"));
+            polecenie.Start();
+
+            WątekOdtwarzania = new Thread(Odtwarzaj);
+            WątekOdtwarzania.Start();
+        }
+
+        private void StopBtn_Click(object sender, EventArgs e)
+        {
+            var polecenie = new Thread(() => WydajRozkaz("STOP"));
+            polecenie.Start();
+
+            WątekOdtwarzania.Abort();
+        }
     }
 }

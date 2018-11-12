@@ -124,6 +124,7 @@
             // 
             this.NextBtn.BackColor = System.Drawing.Color.Silver;
             this.NextBtn.Enabled = false;
+            this.NextBtn.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
             this.NextBtn.Font = new System.Drawing.Font("Lato", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(238)));
             this.NextBtn.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(232)))), ((int)(((byte)(234)))), ((int)(((byte)(246)))));
             this.NextBtn.Location = new System.Drawing.Point(337, 578);

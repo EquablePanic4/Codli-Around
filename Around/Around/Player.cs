@@ -1,6 +1,9 @@
 ﻿using Around.Biblioteki;
 using System;
 using System.Drawing;
+using System.IO;
+using System.Media;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -8,6 +11,11 @@ using System.Windows.Forms;
 
 namespace Around
 {
+    /*
+     * PORT TCP (ŁĄCZENIE Z NOWYMI KLIENTAMI, I PODTRZYMANIE ICH OBECNOŚCI) - 5759
+     * PORT UDP (SYNCHRONIZACJA PLIKÓW MUZYCZNYCH) - 5758
+     */
+
     public partial class Player : Form
     {
         #region Zmienne
@@ -16,15 +24,30 @@ namespace Around
 
         bool connected;
         string AdresIP;
+        bool MusicReady;
+
+        const int CodliInstructionsPort = 5757;
+        const int FileTransferPort = 5758;
+        const int ConnectionPort = 5759;
 
         #endregion
 
-        #region
+        #region Zmienne wątkowe
 
         Thread WątekPierwszegoPołączenia;
         Thread WątekUtrzymaniaPołączenia;
+        Thread WątekSynchronizacji;
+        Thread WątekOdtwarzania;
+        Thread WątekInstrukcji;
 
         #endregion Zmienne wątkowe
+
+        #region Zmienne obiektowe
+
+        IPAddress MójAdresIP;
+        byte[] muzyka;
+
+        #endregion
 
         #endregion
 
@@ -53,6 +76,8 @@ namespace Around
         {
             connected = false;
             AdresIP = ip;
+            MójAdresIP = IPAddress.Parse(ip);
+            MusicReady = false;
 
             InitializeComponent();
         }
@@ -183,6 +208,14 @@ namespace Around
                     WątekUtrzymaniaPołączenia = new Thread(PodtrzymaniePołączenia);
                     WątekUtrzymaniaPołączenia.Start();
 
+                    //Oraz ustawiamy wątek synchronizacji plików muzycznych
+                    WątekSynchronizacji = new Thread(Synchronizacja);
+                    WątekSynchronizacji.Start();
+
+                    //I uruchamiamy wątek instrukcji
+                    WątekInstrukcji = new Thread(CodliInstructionEngine);
+                    WątekInstrukcji.Start();
+
                     MessageBox.Show("Połączono!");
                 });
             }
@@ -221,6 +254,70 @@ namespace Around
                     MessageBox.Show("Utracono połączenie z serwerem!", "Utracono połączenie");
                 });
             }
+        }
+
+        private void Synchronizacja()
+        {
+            var Nasłuchiwacz = new TcpListener(MójAdresIP, FileTransferPort);
+            Nasłuchiwacz.Start();
+
+            while (true)
+            {
+                var klientPlików = new TcpClient();
+                klientPlików = Nasłuchiwacz.AcceptTcpClient();
+                var strumień = klientPlików.GetStream();
+
+                var bufor = new byte[klientPlików.ReceiveBufferSize];
+                int bajty = strumień.Read(bufor, 0, klientPlików.ReceiveBufferSize);
+
+                //Odebraliśmy nasz plik, więc zapisujemy go do zmiennej globalnej
+                muzyka = bufor;
+            }
+        }
+
+        private void CodliInstructionEngine()
+        {
+            var Nasłuchiwacz = new TcpListener(MójAdresIP, CodliInstructionsPort);
+            Nasłuchiwacz.Start();
+
+            while (true)
+            {
+                var klientPlików = new TcpClient();
+                klientPlików = Nasłuchiwacz.AcceptTcpClient();
+                var strumień = klientPlików.GetStream();
+
+                var bufor = new byte[klientPlików.ReceiveBufferSize];
+                int bajty = strumień.Read(bufor, 0, klientPlików.ReceiveBufferSize);
+
+                //Odebraliśmy naszą instrukcję, teraz musimy jak najszybciej ją zinterpretować i wykonać
+                var instrukcja = Encoding.UTF8.GetString(bufor, 0, bajty).ToUpper();
+
+                switch (instrukcja)
+                {
+                    case "PLAY":
+                        WątekOdtwarzania = new Thread(MusicPlayer);
+                        WątekOdtwarzania.Start();
+                        break;
+
+                    case "STOP":
+                        WątekOdtwarzania.Abort();
+                        break;
+                }
+            }
+        }
+
+        private void MusicPlayer()
+        {
+            /*using (MemoryStream strumieńPamięci = new MemoryStream(muzyka))
+            {
+                SoundPlayer soundPlayer = new SoundPlayer(strumieńPamięci);
+                soundPlayer.Play();
+            }*/
+
+            this.Invoke((MethodInvoker)delegate
+           {
+               MessageBox.Show("Rozmiar tablicy wynosi: " + muzyka.Length);
+           });
         }
 
         #endregion

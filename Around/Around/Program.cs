@@ -16,6 +16,7 @@ namespace Around
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            Application.EnableVisualStyles();
             Application.Run(new MainForm());
         }
     }
