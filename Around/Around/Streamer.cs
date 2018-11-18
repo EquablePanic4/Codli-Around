@@ -13,6 +13,7 @@ using System.Threading;
 using System.Windows.Forms;
 using Around.Biblioteki;
 using Around.Modele;
+using NAudio.Wave;
 
 namespace Around
 {
@@ -33,6 +34,10 @@ namespace Around
         const int FileTransferPort = 5758;
         const int ConnectionPort = 5759;
 
+        bool MusicSynced;
+        byte[] MusicFile;
+        bool playMusic;
+
         #endregion
 
         #region Zmienne obiektowe
@@ -41,6 +46,7 @@ namespace Around
         Point previousFormLoc;
 
         IPAddress AdresIP;
+        WaveOut odtwarzacz;
 
         TcpListener Nasłuchiwacz;
         TcpClient Klient;
@@ -87,6 +93,8 @@ namespace Around
             AdresIP = IPAddress.Parse(IPAddressStr);
             Nasłuchiwacz = new TcpListener(AdresIP, 5759);
             ListaAdresówKlientów = new List<KlientIPModel>();
+            MusicSynced = false;
+            playMusic = false;
 
             InitializeComponent();
         }
@@ -102,6 +110,22 @@ namespace Around
 
             WątekAktywnychKlientów = new Thread(ConnectedClientsCounter);
             WątekAktywnychKlientów.Start();
+        }
+
+        #endregion
+
+        #region Odtwarzanie dźwięków
+
+        private void ZainicjujPieśń()
+        {
+            odtwarzacz = new WaveOut();
+            var dostawca = new RawSourceWaveStream(new MemoryStream(MusicFile), new WaveFormat());
+            odtwarzacz.Init(dostawca);
+        }
+
+        private void Odtwarzaj()
+        {
+            odtwarzacz.Play();
         }
 
         #endregion
@@ -210,14 +234,42 @@ namespace Around
             {
                 var cacheKlienci = ListaAdresówKlientów;
                 var plik = File.ReadAllBytes(ścieżkaDoPliku);
+                MusicFile = File.ReadAllBytes(ścieżkaDoPliku);
+
                 var Conte = 0;
 
                 foreach (var e in cacheKlienci)
                 {
                     //Wysyłanie do pojedynczego klienta z listy
+
+                    //Z using
+                    /*using (var gniazdoKlienta = new TcpClient(e.AdresIP, FileTransferPort).GetStream())
+                    {
+                        gniazdoKlienta.Write(BitConverter.GetBytes()
+                    }*/
+
                     TcpClient tcpClient = new TcpClient(e.AdresIP, FileTransferPort);
+                    tcpClient.SendBufferSize = plik.Length;
                     NetworkStream stream = tcpClient.GetStream();
-                    stream.Write(plik, 0, plik.Length);
+
+                    var rozmiarBufora = 1024;
+                    int sentBytes = 0;
+                    var plikLength = BitConverter.GetBytes(plik.Length);
+
+                    stream.Write(plikLength, sentBytes, 4);
+
+                    int bytesLeft = plik.Length;
+
+                    while (bytesLeft > 0)
+                    {
+                        int curDataSize = Math.Min(rozmiarBufora, bytesLeft);
+
+                        stream.Write(plik, sentBytes, curDataSize);
+
+                        sentBytes += curDataSize;
+                        bytesLeft -= curDataSize;
+                    }
+
                     tcpClient.Close();
 
                     //Inkrementacja naszego quantyfikatora
@@ -229,6 +281,8 @@ namespace Around
                         progress = 100;
 
                     MakeProgress(progress);
+                    ZainicjujPieśń();
+                    MusicSynced = true;
                 }
             }
 
@@ -236,6 +290,12 @@ namespace Around
             {
 
             }
+
+            SyncBtn.Invoke((MethodInvoker)delegate
+           {
+               SyncBtn.Enabled = true;
+               SyncBtn.BackColor = Color.FromArgb(26, 35, 126);
+           });
         }
 
         private void WydajRozkaz(string polecenie)
@@ -250,14 +310,9 @@ namespace Around
             }
 
             //Teraz należy ten rozkaz wykonać również u nas...
+            Odtwarzaj();
         }
-
-        private void Odtwarzaj()
-        {
-            var player = new SoundPlayer(FilePathBox.Text);
-            player.Play();
-        }
-
+        
         #endregion
 
         #region Obsługa interfejsu
@@ -279,8 +334,7 @@ namespace Around
             var polecenie = new Thread(() => WydajRozkaz("PLAY"));
             polecenie.Start();
 
-            WątekOdtwarzania = new Thread(Odtwarzaj);
-            WątekOdtwarzania.Start();
+            Odtwarzaj();
         }
 
         private void StopBtn_Click(object sender, EventArgs e)

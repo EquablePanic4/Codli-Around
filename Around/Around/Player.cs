@@ -1,4 +1,5 @@
 ﻿using Around.Biblioteki;
+using NAudio.Wave;
 using System;
 using System.Drawing;
 using System.IO;
@@ -25,6 +26,7 @@ namespace Around
         bool connected;
         string AdresIP;
         bool MusicReady;
+        bool startPlayMusic;
 
         const int CodliInstructionsPort = 5757;
         const int FileTransferPort = 5758;
@@ -45,6 +47,7 @@ namespace Around
         #region Zmienne obiektowe
 
         IPAddress MójAdresIP;
+        WaveOut odtwarzacz;
         byte[] muzyka;
 
         #endregion
@@ -78,6 +81,7 @@ namespace Around
             AdresIP = ip;
             MójAdresIP = IPAddress.Parse(ip);
             MusicReady = false;
+            startPlayMusic = false;
 
             InitializeComponent();
         }
@@ -144,6 +148,27 @@ namespace Around
 
             ConnectionKeyBox.Focus();
             ConnectionKeyBox.SelectionStart = ConnectionKeyBox.Text.Length;
+        }
+
+        #endregion
+
+        #region Odtwarzanie muzyki
+
+        private void ZainicjujOdtwarzacz()
+        {
+            odtwarzacz = new WaveOut();
+            var dostawca = new RawSourceWaveStream(new MemoryStream(muzyka), new WaveFormat());
+            odtwarzacz.Init(dostawca);
+        }
+
+        private void Odtwarzaj()
+        {
+            odtwarzacz.Play();
+        }
+
+        private void KoniecOdtwarzania()
+        {
+            odtwarzacz.Stop();
         }
 
         #endregion
@@ -267,11 +292,47 @@ namespace Around
                 klientPlików = Nasłuchiwacz.AcceptTcpClient();
                 var strumień = klientPlików.GetStream();
 
-                var bufor = new byte[klientPlików.ReceiveBufferSize];
-                int bajty = strumień.Read(bufor, 0, klientPlików.ReceiveBufferSize);
+                /* var recivedBufferSize = klientPlików.SendBufferSize;
+                 var bufor = new byte[recivedBufferSize];
+                 var odebranychBajtów = 0;
+
+                 while (odebranychBajtów < recivedBufferSize)
+                     odebranychBajtów += strumień.Read(bufor, odebranychBajtów, bufor.Length - odebranychBajtów);
+
+                 //I wyświetlimy sobie informacje...*/
+
+                byte[] fileSizeBytes = new byte[4];
+                int bytes = strumień.Read(fileSizeBytes, 0, 4);
+                int dataLength = BitConverter.ToInt32(fileSizeBytes, 0);
+
+                int bytesLeft = dataLength;
+                byte[] data = new byte[dataLength];
+
+                int bufferSize = 1024;
+                int bytesRead = 0;
+
+                while (bytesLeft > 0)
+                {
+                    int curDataSize = Math.Min(bufferSize, bytesLeft);
+                    if (klientPlików.Available < curDataSize)
+                        curDataSize = klientPlików.Available; //This saved me
+
+                    bytes = strumień.Read(data, bytesRead, curDataSize);
+
+                    bytesRead += curDataSize;
+                    bytesLeft -= curDataSize;
+                }
+
+                /*this.Invoke((MethodInvoker)delegate
+               {
+                   MessageBox.Show("klientPlików.ReceiveBufferSize = " + recivedBufferSize + "\r\n" +
+                       "bufor = " + bufor.Length + "\r\n" +
+                       "odebranychBajtów = " + odebranychBajtów);
+               });*/
 
                 //Odebraliśmy nasz plik, więc zapisujemy go do zmiennej globalnej
-                muzyka = bufor;
+                muzyka = data;
+                ZainicjujOdtwarzacz();
             }
         }
 
@@ -295,29 +356,14 @@ namespace Around
                 switch (instrukcja)
                 {
                     case "PLAY":
-                        WątekOdtwarzania = new Thread(MusicPlayer);
-                        WątekOdtwarzania.Start();
+                        Odtwarzaj();
                         break;
 
                     case "STOP":
-                        WątekOdtwarzania.Abort();
+                        KoniecOdtwarzania();
                         break;
                 }
             }
-        }
-
-        private void MusicPlayer()
-        {
-            /*using (MemoryStream strumieńPamięci = new MemoryStream(muzyka))
-            {
-                SoundPlayer soundPlayer = new SoundPlayer(strumieńPamięci);
-                soundPlayer.Play();
-            }*/
-
-            this.Invoke((MethodInvoker)delegate
-           {
-               MessageBox.Show("Rozmiar tablicy wynosi: " + muzyka.Length);
-           });
         }
 
         #endregion
